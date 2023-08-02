@@ -1,0 +1,11 @@
+{
+  "soa": {
+    "serial": 20230730,
+    "primary_ns": "ns1",
+    "mailaddr": "mail@example.com"
+  },
+  "fqdn_suffix": "foo.example.com.",
+  "ipv4_prefix": "10.0.0.0/24",
+  "ipv6_prefix": "fe80:1::/64",
+  "hosts_file": "example_hosts"
+}

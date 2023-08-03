@@ -187,6 +187,7 @@ def gen_zone(zonedir, zonename, gen_func, zone, hosts, force, check_zone):
 
     if write:
         os.rename(new_filepath, filepath)
+        os.chmod(filepath, 0o644)
         print(f'saved!')
     else:
         os.remove(new_filepath)

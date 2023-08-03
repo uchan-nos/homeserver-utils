@@ -81,12 +81,21 @@ def gen_zone_soa_ns(zone):
                    IN  NS      {zone['soa']['primary_ns']}.{zone['fqdn_suffix']}
 '''
 
-def gen_zone_ipv4_forward(zone, hosts):
-    ip_prefix = '.'.join(get_ipv4_prefix(zone))
+def gen_zone_forward(zone, hosts):
+    ipv4_prefix = '.'.join(get_ipv4_prefix(zone))
     a_records_str = '\n'.join(
-        f'{h.name:18} IN  A       {ip_prefix}.{h.ip_last}'
+        f'{h.name:18} IN  A       {ipv4_prefix}.{h.ip_last}'
         for h in hosts
         )
+
+    ipv6_prefix = ':'.join(get_ipv6_prefix(zone))
+    def make_ipv6_addr(h):
+        return ipaddress.IPv6Address(f'{ipv6_prefix}::{hex(h.ip_last)[2:]}')
+    aaaa_records_str = '\n'.join(
+        f'{h.name:18} IN  AAAA    {make_ipv6_addr(h).compressed}'
+        for h in hosts
+        )
+
     forward_zone = f'''\
 $ORIGIN {zone['fqdn_suffix']}
 $TTL 3600
@@ -94,6 +103,8 @@ $TTL 3600
 {gen_zone_soa_ns(zone)}
 
 {a_records_str}
+
+{aaaa_records_str}
 '''
     return forward_zone
 
@@ -112,25 +123,6 @@ $TTL 3600
 {ptr_records_str}
 '''
     return reverse_zone
-
-def gen_zone_ipv6_forward(zone, hosts):
-    ip_prefix = ':'.join(get_ipv6_prefix(zone))
-    def make_addr(h):
-        return ipaddress.IPv6Address(f'{ip_prefix}::{hex(h.ip_last)[2:]}')
-
-    aaaa_records_str = '\n'.join(
-        f'{h.name:18} IN  AAAA    {make_addr(h).compressed}'
-        for h in hosts
-        )
-    forward_zone = f'''\
-$ORIGIN {zone['fqdn_suffix']}
-$TTL 3600
-
-{gen_zone_soa_ns(zone)}
-
-{aaaa_records_str}
-'''
-    return forward_zone
 
 def gen_zone_ipv6_reverse(zone, hosts):
     origin = gen_origin_ipv6_reverse(zone)
@@ -164,7 +156,8 @@ def read_zone_and_hosts(dirpath, zone_filename):
         hosts = read_hosts(f)
     return (zone, hosts)
 
-def gen_zone(zonedir, filename, gen_func, zone, hosts, force):
+def gen_zone(zonedir, zonename, gen_func, zone, hosts, force, check_zone):
+    filename = zonename + 'zone'
     print(f'\033[31m* Processing {filename}\033[0m')
     zone = gen_func(zone, hosts)
     filepath = os.path.join(zonedir, filename)
@@ -179,6 +172,12 @@ def gen_zone(zonedir, filename, gen_func, zone, hosts, force):
         print(f'no difference between {filename} and {new_filename}')
         os.remove(new_filepath)
         return
+
+    if check_zone:
+        p = subprocess.run(['nsd-checkzone', zonename, new_filepath])
+        if p.returncode != 0:
+            print(f'\033[31mFound error(s) in {new_filepath}. Please check it.\033[0m')
+            sys.exit(1)
 
     if force:
         write = True
@@ -200,20 +199,21 @@ def main():
                    help='path to a directory holding zone files')
     p.add_argument('-f', '--force', action='store_true',
                    help='save a zone file without confirmation')
+    p.add_argument('--skip-check', action='store_true',
+                   help='skip checking with nsd-checkzone')
     args = p.parse_args()
+    check_zone = not args.skip_check
 
     zone, hosts = read_zone_and_hosts(os.path.dirname(args.zone_json),
                                       os.path.basename(args.zone_json))
 
     fqdn_suffix = zone['fqdn_suffix']
-    gen_zone(args.zonedir, f'{fqdn_suffix}zone',
-             gen_zone_ipv4_forward, zone, hosts, args.force)
-    gen_zone(args.zonedir, f'{gen_origin_ipv4_reverse(zone)}zone',
-             gen_zone_ipv4_reverse, zone, hosts, args.force)
-    gen_zone(args.zonedir, f'{fqdn_suffix}ip6.zone',
-             gen_zone_ipv6_forward, zone, hosts, args.force)
-    gen_zone(args.zonedir, f'{gen_origin_ipv6_reverse(zone)}zone',
-             gen_zone_ipv6_reverse, zone, hosts, args.force)
+    gen_zone(args.zonedir, f'{fqdn_suffix}',
+             gen_zone_forward, zone, hosts, args.force, check_zone)
+    gen_zone(args.zonedir, f'{gen_origin_ipv4_reverse(zone)}',
+             gen_zone_ipv4_reverse, zone, hosts, args.force, check_zone)
+    gen_zone(args.zonedir, f'{gen_origin_ipv6_reverse(zone)}',
+             gen_zone_ipv6_reverse, zone, hosts, args.force, check_zone)
 
 if __name__ == '__main__':
     main()
